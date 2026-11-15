@@ -261,6 +261,7 @@ class MainActivity : AppCompatActivity() {
         val pv = PreviewView(this)
         root.addView(pv, LinearLayout.LayoutParams(-1, dp(330)))
         val info = text("запускаю камеру…", 13f, dim)
+        val diag = text("", 11f, dim)
         val ready: (Camera, ImageCapture) -> Unit = { _, _ ->
             CameraNode.startServer(8080)
             diag.text = "камер: ${lensInfos.size} · " + lensInfos.joinToString("  ") {
@@ -275,7 +276,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         root.addView(info)
-        val diag = text("", 11f, dim)
         root.addView(diag)
         root.addView(lensRow(pv, info, ready))
         root.addView(zoomRow())
@@ -504,7 +504,8 @@ class MainActivity : AppCompatActivity() {
             res.moa?.let { append(" · ${"%.2f".format(it)} MOA") }
             res.offX?.let { append("\nСТП ${"%+.1f".format(it)} / ${"%+.1f".format(res.offY ?: 0.0)} мм") }
         }
-        append("\nсдвиг ${res.shiftX}, ${res.shiftY} px")
+        if (res.motion > 8) append("\n⚠ телефон двигался (${res.motion} px) — лучше поставить на опору")
+        else append("\nсдвиг ${res.shiftX}, ${res.shiftY} px")
     }
 
     private fun drawOverlay(bmp: Bitmap, res: Detector.Result): Bitmap {

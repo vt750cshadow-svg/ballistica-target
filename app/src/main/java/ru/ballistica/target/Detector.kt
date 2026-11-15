@@ -37,7 +37,7 @@ object Detector {
         val offY: Double?,
         val shiftX: Int,
         val shiftY: Int,
-        val cost: Int
+        val motion: Int
     )
 
     fun gray(bmp: Bitmap): Gray {
@@ -265,21 +265,74 @@ object Detector {
     fun analyze(base: Gray, curIn: Gray): Result {
         var cur = curIn
         if (cur.w != base.w || cur.h != base.h) cur = resize(cur, base.w, base.h)
+        val w = base.w
+        val h = base.h
 
         val bb = blur(base)
         val cb = blur(cur)
 
-        var sh = coarseShift(bb, cb, base.w, base.h)
-        sh = refineShift(bb, cb, base.w, base.h, sh[0], sh[1])
-        val dx = sh[0]
-        val dy = sh[1]
-        val moved = shifted(cb, base.w, base.h, dx, dy)
+        // общий сдвиг
+        var sh = coarseShift(bb, cb, w, h)
+        sh = refineShift(bb, cb, w, h, sh[0], sh[1])
+        val gdx = sh[0]
+        val gdy = sh[1]
 
-        val k = medianBright(bb) / maxOf(medianBright(moved), 1f)
-        val w = base.w
-        val h = base.h
+        // локальные сдвиги по плиткам: ловят поворот и параллакс от руки
+        val t = 4
+        val tdx = IntArray(t * t) { gdx }
+        val tdy = IntArray(t * t) { gdy }
+        var motion = 0
+        for (ty in 0 until t) {
+            for (tx in 0 until t) {
+                val x0 = tx * w / t
+                val x1 = (tx + 1) * w / t
+                val y0 = ty * h / t
+                val y1 = (ty + 1) * h / t
+                var best = Long.MAX_VALUE
+                var bx = gdx
+                var by = gdy
+                for (dy in -6..6) {
+                    for (dx in -6..6) {
+                        val cx = gdx + dx
+                        val cy = gdy + dy
+                        var sum = 0L
+                        var n = 0
+                        var y = y0
+                        while (y < y1) {
+                            val yy = y + cy
+                            if (yy in 1 until h - 1) {
+                                var x = x0
+                                while (x < x1) {
+                                    val xx = x + cx
+                                    if (xx in 1 until w - 1) {
+                                        sum += abs(bb[y * w + x] - cb[yy * w + xx]).toLong()
+                                        n++
+                                    }
+                                    x += 4
+                                }
+                            }
+                            y += 4
+                        }
+                        if (n > 50) {
+                            val d = sum / n
+                            if (d < best) {
+                                best = d
+                                bx = cx
+                                by = cy
+                            }
+                        }
+                    }
+                }
+                tdx[ty * t + tx] = bx
+                tdy[ty * t + tx] = by
+                motion = maxOf(motion, abs(bx - gdx), abs(by - gdy))
+            }
+        }
 
-        // края мишени: там всегда будут расхождения при любом шевелении
+        // яркость подгоняем по бумаге
+        val k = medianBright(bb) / maxOf(medianBright(cb), 1f)
+
+        // края мишени: при любом шевелении там всегда расхождения
         val edge = BooleanArray(w * h)
         for (y in 1 until h - 1) {
             for (x in 1 until w - 1) {
@@ -294,11 +347,16 @@ object Detector {
 
         val mask = BooleanArray(w * h)
         for (y in 8 until h - 8) {
+            val ty = (y * t / h).coerceIn(0, t - 1)
             val row = y * w
             for (x in 8 until w - 8) {
                 val i = row + x
                 if (edgeZone[i] || darkZone[i]) continue
-                val cv = (moved[i] * k).toInt().coerceIn(0, 255)
+                val tx = (x * t / w).coerceIn(0, t - 1)
+                val ti = ty * t + tx
+                val xx = (x + tdx[ti]).coerceIn(0, w - 1)
+                val yy = (y + tdy[ti]).coerceIn(0, h - 1)
+                val cv = (cb[yy * w + xx] * k).toInt().coerceIn(0, 255)
                 if (cv >= thrAbs) continue
                 if (bb[i] - cv > thrDark) mask[i] = true
             }
@@ -353,11 +411,9 @@ object Detector {
             if (cnt < minAreaPx) continue
             val bw = maxX - minX + 1
             val bh = maxY - minY + 1
-            val fill = cnt.toDouble() / (bw * bh)
-            if (fill < 0.35) continue
             if (bw < 4 || bh < 4) continue
-            val aspect = maxOf(bw, bh).toDouble() / minOf(bw, bh)
-            if (aspect > 2.5) continue
+            if (cnt.toDouble() / (bw * bh) < 0.35) continue
+            if (maxOf(bw, bh).toDouble() / minOf(bw, bh) > 2.5) continue
             val dmm = 2.0 * sqrt(cnt / PI) * mmPerPx
             if (dmm < minDmm || dmm > maxDmm) continue
             holes.add(Hole(sumX.toDouble() / cnt, sumY.toDouble() / cnt, cnt, dmm))
@@ -378,7 +434,7 @@ object Detector {
         val offY = cy?.let { (base.h / 2.0 - it) * mmPerPx }
         val moa = if (group > 0) (group / 1000.0) / tan(PI / 180 / 60) / distanceM else null
 
-        return Result(holes.size, holes, group, moa, offX, offY, dx, dy, 0)
+        return Result(holes.size, holes, group, moa, offX, offY, gdx, gdy, motion)
     }
 
     private fun resize(g: Gray, nw: Int, nh: Int): Gray {
