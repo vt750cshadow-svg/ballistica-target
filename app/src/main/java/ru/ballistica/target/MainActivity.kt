@@ -267,6 +267,9 @@ class MainActivity : AppCompatActivity() {
             diag.text = "камер: ${lensInfos.size} · " + lensInfos.joinToString("  ") {
                 "id${idOf(it)} f${"%.1f".format(focalOf(it))}"
             }
+            Debug.log(this, "камеры: " + lensInfos.joinToString("; ") {
+                "id${idOf(it)} f=${"%.1f".format(focalOf(it))}"
+            })
             info.text = "адрес: http://${localIp()}:8080\nснимков отдано: ${CameraNode.shots}"
             lifecycleScope.launch {
                 while (true) {
@@ -369,6 +372,7 @@ class MainActivity : AppCompatActivity() {
                     delay(250)
                 }
                 baseGray = Detector.medianOf(frames)
+                baseGray?.let { Debug.save(this@MainActivity, "база.jpg", Debug.jpeg(Debug.grayImage(it)), "image/jpeg") }
                 status.text = "база запомнена"
                 control(null, status)
             } catch (e: Exception) {
@@ -388,6 +392,7 @@ class MainActivity : AppCompatActivity() {
                 val bmp = decode(CameraNode.takeJpeg())
                 val scaled = Bitmap.createScaledBitmap(bmp, base.w, base.h, true)
                 val res = Detector.analyze(base, Detector.gray(scaled))
+                dump(base, scaled, res)
                 status.text = describe(res)
                 view.visibility = View.VISIBLE
                 view.setImageBitmap(drawOverlay(scaled, res))
@@ -478,6 +483,7 @@ class MainActivity : AppCompatActivity() {
                 val bmp = fetchBitmap(url)
                 val scaled = Bitmap.createScaledBitmap(bmp, base.w, base.h, true)
                 val res = Detector.analyze(base, Detector.gray(scaled))
+                dump(base, scaled, res)
                 status.text = describe(res)
                 picture.setImageBitmap(drawOverlay(scaled, res))
             } catch (e: Exception) {
@@ -496,6 +502,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------- общее
+
+    private fun dump(base: Detector.Gray, shot: Bitmap, res: Detector.Result) {
+        try {
+            Debug.save(this, "кадр.jpg", Debug.jpeg(shot), "image/jpeg")
+            Debug.save(this, "маска.png", Debug.png(Debug.maskImage(base, res.mask)), "image/png")
+            Debug.log(
+                this,
+                "новых=${res.count} сдвиг=${res.shiftX},${res.shiftY} движение=${res.motion} " +
+                    "порог=${Detector.thrDark}/${Detector.thrAbs} дырки=" +
+                    res.holes.joinToString(",") { "%.1f".format(it.dmm) }
+            )
+        } catch (e: Exception) {
+            // молча: отладка не должна мешать
+        }
+    }
 
     private fun describe(res: Detector.Result): String = buildString {
         append("новых: ${res.count}")

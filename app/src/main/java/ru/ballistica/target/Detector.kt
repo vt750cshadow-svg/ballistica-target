@@ -37,7 +37,8 @@ object Detector {
         val offY: Double?,
         val shiftX: Int,
         val shiftY: Int,
-        val motion: Int
+        val motion: Int,
+        val mask: BooleanArray? = null
     )
 
     fun gray(bmp: Bitmap): Gray {
@@ -434,7 +435,7 @@ object Detector {
         val offY = cy?.let { (base.h / 2.0 - it) * mmPerPx }
         val moa = if (group > 0) (group / 1000.0) / tan(PI / 180 / 60) / distanceM else null
 
-        return Result(holes.size, holes, group, moa, offX, offY, gdx, gdy, motion)
+        return Result(holes.size, holes, group, moa, offX, offY, gdx, gdy, motion, m)
     }
 
     private fun resize(g: Gray, nw: Int, nh: Int): Gray {
