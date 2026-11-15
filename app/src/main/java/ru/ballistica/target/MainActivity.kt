@@ -142,8 +142,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectorFor(info: CameraInfo): CameraSelector =
-        CameraSelector.Builder().addCameraFilter { list -> list.filter { it == info } }.build()
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun idOf(info: CameraInfo): String = try {
+        Camera2CameraInfo.from(info).cameraId
+    } catch (e: Exception) {
+        "?"
+    }
+
+    private fun selectorFor(info: CameraInfo): CameraSelector {
+        val id = idOf(info)
+        return CameraSelector.Builder()
+            .addCameraFilter { list -> list.filter { idOf(it) == id } }
+            .build()
+    }
 
     private fun startCamera(
         pv: PreviewView,
@@ -252,6 +263,9 @@ class MainActivity : AppCompatActivity() {
         val info = text("запускаю камеру…", 13f, dim)
         val ready: (Camera, ImageCapture) -> Unit = { _, _ ->
             CameraNode.startServer(8080)
+            diag.text = "камер: ${lensInfos.size} · " + lensInfos.joinToString("  ") {
+                "id${idOf(it)} f${"%.1f".format(focalOf(it))}"
+            }
             info.text = "адрес: http://${localIp()}:8080\nснимков отдано: ${CameraNode.shots}"
             lifecycleScope.launch {
                 while (true) {
@@ -261,6 +275,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         root.addView(info)
+        val diag = text("", 11f, dim)
+        root.addView(diag)
         root.addView(lensRow(pv, info, ready))
         root.addView(zoomRow())
         root.addView(button("Сменить роль") { setRole("") })
@@ -322,6 +338,27 @@ class MainActivity : AppCompatActivity() {
         startCamera(pv, status, ready)
     }
 
+    private suspend fun grabBitmap(url: String?): Bitmap =
+        if (url == null) decode(CameraNode.takeJpeg()) else fetchBitmap(url)
+
+    /** Три контрольных кадра сразу после базы: если не нули — фон шумит. */
+    private suspend fun control(url: String?, status: TextView) {
+        val base = baseGray ?: return
+        val counts = ArrayList<Int>()
+        repeat(3) {
+            try {
+                val bmp = grabBitmap(url)
+                val scaled = Bitmap.createScaledBitmap(bmp, base.w, base.h, true)
+                counts.add(Detector.analyze(base, Detector.gray(scaled)).count)
+            } catch (e: Exception) {
+                counts.add(-1)
+            }
+            delay(300)
+        }
+        status.text = "база ${base.w}×${base.h} · контроль " +
+            counts.joinToString("/") { if (it < 0) "ошибка" else it.toString() }
+    }
+
     private fun rememberLocal(status: TextView) {
         lifecycleScope.launch {
             status.text = "снимаю 5 кадров…"
@@ -332,7 +369,8 @@ class MainActivity : AppCompatActivity() {
                     delay(250)
                 }
                 baseGray = Detector.medianOf(frames)
-                status.text = "база запомнена: ${baseGray!!.w}×${baseGray!!.h}"
+                status.text = "база запомнена"
+                control(null, status)
             } catch (e: Exception) {
                 status.text = "не вышло: ${e.message}"
             }
@@ -421,7 +459,8 @@ class MainActivity : AppCompatActivity() {
                     delay(250)
                 }
                 baseGray = Detector.medianOf(frames)
-                status.text = "база запомнена: ${baseGray!!.w}×${baseGray!!.h}"
+                status.text = "база запомнена"
+                control(url, status)
             } catch (e: Exception) {
                 status.text = "не вышло: ${e.message}"
             }
